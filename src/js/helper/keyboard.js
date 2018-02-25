@@ -59,18 +59,27 @@
         let initSidebarEvents = () => {
             $([document, ext.elements.iframe[0].contentDocument]).on("keydown.bs", (e) => {
                 if (isSidebarFocussed()) { // sidebar is focussed
-                    let scrollKeys = ["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End", "Space"];
+                    let scrollKeys = ["PageDown", "PageUp", "Home", "End", "Space"];
                     let isContextmenuOpen = ext.elements.sidebar.find("div." + ext.opts.classes.contextmenu.wrapper).length() > 0;
                     let isDragged = ext.elements.iframeBody.hasClass(ext.opts.classes.drag.isDragged);
 
                     if (scrollKeys.indexOf(e.key) > -1 || scrollKeys.indexOf(e.code) > -1) {
                         ext.helper.scroll.focus();
-                    } else if (e.key === "Tab") { // jump to the next entry
+                    } else if (e.key === "Tab" || e.key === "ArrowDown") { // jump to the next entry
                         e.preventDefault();
+
                         if (isContextmenuOpen) {
                             hoverNextContextmenuEntry();
                         } else {
                             hoverNextEntry();
+                        }
+                    } else if (e.key === "ArrowUp") { // jump to the next entry
+                        e.preventDefault();
+
+                        if (isContextmenuOpen) {
+                            hoverPreviousContextmenuEntry();
+                        } else {
+                            hoverPreviousEntry();
                         }
                     } else if (e.key === "Enter") { // click the current entry
                         e.preventDefault();
@@ -213,6 +222,32 @@
         };
 
         /**
+         * Hovers the previous entry in the currently visible contextmenu
+         */
+        let hoverPreviousContextmenuEntry = () => {
+            let contextmenu = ext.elements.sidebar.find("div." + ext.opts.classes.contextmenu.wrapper);
+            let hoveredElm = null;
+            let entry = null;
+
+            if (contextmenu.find("a." + ext.opts.classes.sidebar.hover).length() > 0) {
+                entry = contextmenu.find("a." + ext.opts.classes.sidebar.hover).eq(0);
+            }
+
+            if (entry === null) { // hover the first entry
+                hoveredElm = contextmenu.find("a").eq(0);
+            } else if (entry.parent("li").next("li").length() > 0) { // hover the next entry
+                hoveredElm = entry.parent("li").previous("li").find("a");
+            } else if (entry.parents("ul").eq(0).previous("ul").length() > 0) { // hover the first entry of the next list
+                hoveredElm = entry.parents("ul").eq(0).next("ul").find("a:last-child");
+            } else { // last entry of the last list -> hover the first entry
+                hoveredElm = contextmenu.find("a:last-child");
+            }
+
+            contextmenu.find("a." + ext.opts.classes.sidebar.hover).removeClass(ext.opts.classes.sidebar.hover);
+            hoveredElm.addClass(ext.opts.classes.sidebar.hover);
+        };
+
+        /**
          * Hovers the next entry in the currently visible contextmenu
          */
         let hoverNextContextmenuEntry = () => {
@@ -241,26 +276,105 @@
         /**
          * Hovers the next element in the currently visible bookmark list
          */
-        let hoverNextEntry = () => {
+        let hoverPreviousEntry = () => {
+
             Object.values(ext.elements.bookmarkBox).some((box) => {
                 if (box.hasClass(ext.opts.classes.sidebar.active)) {
-                    let scrollTop = ext.helper.scroll.getScrollPos(box);
-                    let firstVisibleEntry = null;
 
-                    if (box.find("ul > li > a." + ext.opts.classes.sidebar.mark).length() > 0) {
-                        firstVisibleEntry = box.find("ul > li > a." + ext.opts.classes.sidebar.mark).eq(0).parent("li");
-                    } else if (box.find("ul > li > a." + ext.opts.classes.sidebar.hover).length() > 0) {
-                        firstVisibleEntry = box.find("ul > li > a." + ext.opts.classes.sidebar.hover).eq(0).parent("li");
-                    } else if (box.find("ul > li > a." + ext.opts.classes.sidebar.lastHover).length() > 0) {
-                        firstVisibleEntry = box.find("ul > li > a." + ext.opts.classes.sidebar.lastHover).eq(0).parent("li");
-                    } else {
-                        box.find("ul > li").forEach((entry) => {
-                            if (entry.offsetTop >= scrollTop) {
-                                firstVisibleEntry = $(entry);
-                                return false;
+                    let scrollTop = ext.helper.scroll.getScrollPos(box);
+                    let firstVisibleEntry = getFirstVisibleSelectedEntryFromBox(box);
+
+                    if (firstVisibleEntry) {
+                        let link = firstVisibleEntry.children("a");
+                        let hoveredElm = null;
+
+                        if (link.hasClass(ext.opts.classes.sidebar.hover) || link.hasClass(ext.opts.classes.sidebar.mark)) {
+                            if (link.hasClass(ext.opts.classes.sidebar.dirOpened) && link.prev("ul").length() > 0) { // one layer deeper
+                                // Go to last element of previous folder
+                                hoveredElm = link.prev("ul").find("> li:last-child > a");
+                            } else if (firstVisibleEntry.prev("li").length() > 0) {
+                                // Previous element on the same level
+                                hoveredElm = firstVisibleEntry.prev("li").children("a");
+                            } else { // go to the previous entry in a higher layer
+                                let found = false;
+                                let i = 0;
+
+                                while (found === false) {
+                                    let parentEntry = firstVisibleEntry.parents("li").eq(i);
+
+                                    if (parentEntry.length() > 0) { // there is a higher layer
+                                        if (parentEntry.prev("li").length() > 0) { // there is a next element in this layer -> mark next
+                                            hoveredElm = parentEntry.prev("li").children("a");
+                                            found = true;
+                                        } else { // in this layer is no next element -> go one layer higher
+                                            i++;
+                                        }
+                                    } else { // no higher layer anymore -> end of the list
+                                        found = true;
+                                    }
+                                }
                             }
-                        });
+                        } else {
+                            hoveredElm = link;
+                        }
+
+                        if (hoveredElm) {
+                            box.find("ul > li > a." + ext.opts.classes.sidebar.hover).removeClass(ext.opts.classes.sidebar.hover);
+                            box.find("ul > li > a." + ext.opts.classes.sidebar.mark).removeClass(ext.opts.classes.sidebar.mark);
+                            hoveredElm.addClass([ext.opts.classes.sidebar.hover, ext.opts.classes.sidebar.lastHover]);
+
+                            let offset = hoveredElm[0].offsetTop - scrollTop;
+                            let pos = window.innerHeight - offset;
+
+                            if (offset < 0) { // element is not visible (from the top) -> scroll to the top offset of the entry
+                                ext.helper.scroll.setScrollPos(box, hoveredElm[0].offsetTop);
+                            } else if (pos < 150) { // element is not visible (from the bottom) -> scroll further to the entry
+                                ext.helper.scroll.setScrollPos(box, scrollTop + (150 - pos));
+                            }
+                        }
                     }
+
+                    return true;
+                }
+            });
+        };
+
+        let getFirstVisibleSelectedEntryFromBox = (box) => {
+
+            if (box.hasClass(ext.opts.classes.sidebar.active)) {
+
+                let scrollTop = ext.helper.scroll.getScrollPos(box);
+                let firstVisibleEntry = null;
+
+                if (box.find("ul > li > a." + ext.opts.classes.sidebar.mark).length() > 0) {
+                    return box.find("ul > li > a." + ext.opts.classes.sidebar.mark).eq(0).parent("li");
+                } else if (box.find("ul > li > a." + ext.opts.classes.sidebar.hover).length() > 0) {
+                    return box.find("ul > li > a." + ext.opts.classes.sidebar.hover).eq(0).parent("li");
+                } else if (box.find("ul > li > a." + ext.opts.classes.sidebar.lastHover).length() > 0) {
+                    return box.find("ul > li > a." + ext.opts.classes.sidebar.lastHover).eq(0).parent("li");
+                } else {
+                    box.find("ul > li").forEach((entry) => {
+                        if (entry.offsetTop >= scrollTop && firstVisibleEntry === null) {
+                            return $(entry);
+                        }
+                    });
+                }
+
+            }
+
+            return null;
+        };
+
+        /**
+         * Hovers the next element in the currently visible bookmark list
+         */
+        let hoverNextEntry = () => {
+
+            Object.values(ext.elements.bookmarkBox).some((box) => {
+                if (box.hasClass(ext.opts.classes.sidebar.active)) {
+
+                    let scrollTop = ext.helper.scroll.getScrollPos(box);
+                    let firstVisibleEntry = getFirstVisibleSelectedEntryFromBox(box);
 
                     if (firstVisibleEntry) {
                         let link = firstVisibleEntry.children("a");
@@ -295,6 +409,7 @@
                         }
 
                         if (hoveredElm) {
+
                             box.find("ul > li > a." + ext.opts.classes.sidebar.hover).removeClass(ext.opts.classes.sidebar.hover);
                             box.find("ul > li > a." + ext.opts.classes.sidebar.mark).removeClass(ext.opts.classes.sidebar.mark);
                             hoveredElm.addClass([ext.opts.classes.sidebar.hover, ext.opts.classes.sidebar.lastHover]);
